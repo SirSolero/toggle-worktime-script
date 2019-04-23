@@ -118,23 +118,23 @@ function printHours($since, $until, $extraO = 0)
     return $o;
 }
 
-$bezogeneFerien = 2 + 8 + 4.5 + 10;
-$krank = 3;
-$notHere = ($krank + $bezogeneFerien) * 8;
-
 
 printHours('today', 'today');
 printHours('yesterday', 'yesterday');
 printHours('last Sunday', 'last Sunday +6 days');
 printHours('last Sunday -1 week', 'last Sunday -1 week +6 days');
-$o2017 = printHours('01.01.2017', '30.12.2017', $notHere);
-$bezogeneFerien = 5 + 2 + 1 + 6 + 10 + 2;
-$krank = 5 + 5;
-$notHere = ($krank + $bezogeneFerien) * 8;
-$o2018 = printHours('01.01.2018', '31.12.2018', $notHere);
-$bezogeneFerien = 0;
-$krank = 1 + 16;
-$notHere = ($krank + $bezogeneFerien) * 8;
-$o2019 = printHours('01.01.2019', 'yesterday', $notHere);
 
-printf("%01.2f \n\n", $o2017 + $o2018 + $o2019);
+$total = 0;
+$thisYear= date('Y');
+for ($year=2017; $year <= $thisYear; $year++){
+    $notHere = (int) getenv('TOGGL_AWAY_'.$year);
+    $notHere *= 8;
+    if($year == $thisYear){
+        $total += printHours('01.01.'.$year, 'yesterday', $notHere);
+    }else{
+        $total += printHours('01.01.'.$year, '30.12.'.$year, $notHere);
+    }
+}
+
+
+printf("%01.2f \n\n", $total);
