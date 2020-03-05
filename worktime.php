@@ -1,5 +1,14 @@
 <?php
 
+function getenvdefault($name, ?string $default = null): ?string
+{
+    if (($result = getenv($name)) === false) {
+        return $default;
+    }
+
+    return $result;
+}
+
 function getHolidays($year)
 {
     $easterDate = easter_date($year);
@@ -7,10 +16,11 @@ function getHolidays($year)
     $easterDay = date('j', $easterDate);
     $easterMonth = date('n', $easterDate);
     $easterYear = date('Y', $easterDate);
-    $bettag = strtotime("3 sunday", mktime(0, 0, 0, 9, 1, $year)); //betttag
+
+    // $bettag = strtotime('3 sunday', mktime(0, 0, 0, 9, 1, $year)); //betttag
 
 
-    $holidays = [
+    return [
         //   mktime(0, 0, 0, 12, 31, $year), // silvester
         mktime(0, 0, 0, 1, 1, $year), // neujahr
         mktime(0, 0, 0, 1, 2, $year), // berchtold
@@ -25,35 +35,33 @@ function getHolidays($year)
         mktime(0, 0, 0, $easterMonth, $easterDay + 51, $easterYear), //pfingst-montag
         //  strtotime('+1 day', $bettag), //bettmontag
     ];
-
-    return $holidays;
 }
 
 function getHalfHolidays($year)
 {
-    $knabenschiessen = strtotime("2 sunday", mktime(0, 0, 0, 9, 1, $year));
+    $knabenschiessen = strtotime('2 sunday', mktime(0, 0, 0, 9, 1, $year));
     $knabenschiessen = strtotime('+1 day', $knabenschiessen);
-    switch ($year) {
-        case 2017:
-            $sechselauten = mktime(0, 0, 0, 4, 24, $year);
-            break;
-        case 2018:
-            $sechselauten = mktime(0, 0, 0, 4, 16, $year);
-            break;
-        case 2019:
-            $sechselauten = mktime(0, 0, 0, 4, 8, $year);
-            break;
-        case 2020:
-            $sechselauten = mktime(0, 0, 0, 4, 20, $year);
-            break;
-        case 2021:
-            $sechselauten = mktime(0, 0, 0, 4, 19, $year);
-            break;
-        default:
-            throw new \Exception('unhandled year');
+
+    return [$knabenschiessen, getSechselauten($year)];
+}
+
+function getSechselauten($year)
+{
+    if (2030 === $year) {
+        return mktime(0, 0, 0, 4, 29, $year);
     }
 
-    return [$knabenschiessen, $sechselauten];
+    //  see https://de.wikipedia.org/wiki/Sechsel%C3%A4uten#Datum
+    $sechselauten = strtotime('3 monday', mktime(0, 0, 0, 4, 1, $year));
+    $ostersonntag = easter_date($year);
+    $secondsPerDay = 60 * 60 * 24;
+    if ($ostersonntag + 1 * $secondsPerDay === $sechselauten) { // sechselauten am Ostermontag
+        $sechselauten += 7 * $secondsPerDay;
+    } elseif ($ostersonntag - 6 * $secondsPerDay === $sechselauten) { // sechselauten in Karwoche
+        $sechselauten -= 7 * $secondsPerDay;
+    }
+
+    return $sechselauten;
 }
 
 function totalHours($since, $until)
@@ -61,18 +69,16 @@ function totalHours($since, $until)
     $token = getenv('TOGGL_TOKEN');
     $userIds = getenv('TOGGL_USER_IDS');
     $userAgent = getenv('TOGGL_USER_AGENT');
-    if($token === false){
+    if ($token === false) {
         die("set TOGGL_TOKEN\n");
     }
-    if($userIds === false){
+    if ($userIds === false) {
         die("set TOGGL_USER_IDS\n");
     }
-    if($userAgent === false){
+    if ($userAgent === false) {
         die("set TOGGL_USER_AGENT\n");
     }
-    $since = new DateTime($since);
     $since = $since->format('Y-m-d');
-    $until = new DateTime($until);
     $until = $until->format('Y-m-d');
     $command = ' curl -s  -u '.$token.':api_token GET "https://toggl.com/reports/api/v2/summary?type=me&workspace_id=1006502&since='.$since.'&until='.$until.'&user_ids='.$userIds.'&user_agent='.$userAgent.'" ';
 
@@ -85,18 +91,26 @@ function totalHours($since, $until)
 
 function hoursToWork($since, $until)
 {
-    $since = new DateTime($since);
-    $until = new DateTime($until);
+    $startYear = (int) getenvdefault('TOGGL_START_YEAR', '2017');
+    $startMonth = (int) getenvdefault('TOGGL_START_MONTH', 1);
+    $daysOff = getDaysOff();
+    $halfDaysOff = getDaysOff(false);
+
     $days = 0;
     while ($since <= $until) {
-        $w = $since->format('w');
-        if ($w != 0 && $w != 6) {
+        $w = (int) $since->format('w');
+        if ($w !== 0 && $w !== 6
+            && !in_array($w, $daysOff, true)
+            && (int) $since->format('U') > mktime(0, 0, 0, $startMonth, 1, $startYear)) {
             $hdays = getHolidays($since->format('Y'));
-            if (array_search($since->getTimestamp(), $hdays) === false) {
+            if (!in_array($since->getTimestamp(), $hdays, true)) {
                 $halfDays = getHalfHolidays($since->format('Y'));
-                if (array_search($since->getTimestamp(), $halfDays) !== false) {
+                if (!in_array($w, $halfDaysOff, true) && in_array($since->getTimestamp(), $halfDays, true)) {
                     $days += 0.5;
-                } else {
+                } elseif (in_array($w, $halfDaysOff, true)) {
+                    $days += 0.5;
+                }
+                else {
                     $days++;
                 }
             }
@@ -107,11 +121,42 @@ function hoursToWork($since, $until)
     return $days * (40 / 5);
 }
 
+function getDaysOff($fullOffDays = true) {
+    $daysOffMask = (int) getenvdefault('TOGGL_'.($fullOffDays ? '' : 'HALF_').'DAYS_OFF', 0);
+    $daysOff = [];
+    $day = 5;
+    for ($dayMask = 16; $dayMask >= 1; $dayMask /= 2) {
+        if($daysOffMask >= $dayMask) {
+            $daysOff[] = $day;
+            $daysOffMask -= $dayMask;
+        }
+        $day--;
+    }
+
+    return $daysOff;
+}
+
+
 function printHours($since, $until, $extraO = 0)
 {
-    echo "$since - $until:\n";
-    $t = totalHours($since, $until);
-    $w = hoursToWork($since, $until);
+    $sinceDatetime = new DateTime($since);
+    $untilDatetime = new DateTime($until);
+    $format =  getenvdefault('TOGGL_SHOW_DATE_FORMAT', null);
+
+    if ($format) {
+        $since = $sinceDatetime->format($format);
+        $until = $untilDatetime->format($format);
+    }
+
+    if ($since === $until) {
+        echo $since.":\n";
+    }
+    else {
+        echo $since.' - '.$until.":\n";
+    }
+
+    $t = totalHours($sinceDatetime, $untilDatetime);
+    $w = hoursToWork($sinceDatetime, $untilDatetime);
     $o = $t - $w + $extraO;
     printf("%01.2f - %01.2f = %01.2f \n\n", $t, $w, $o);
 
@@ -125,16 +170,17 @@ printHours('last Sunday', 'last Sunday +6 days');
 printHours('last Sunday -1 week', 'last Sunday -1 week +6 days');
 
 $total = 0;
-$thisYear= date('Y');
-for ($year=2017; $year <= $thisYear; $year++){
+$thisYear = (int) date('Y');
+$startYear = (int) getenvdefault('TOGGL_START_YEAR', '2017');
+
+for ($year = $startYear; $year <= $thisYear; $year++) {
     $notHere = (int) getenv('TOGGL_AWAY_'.$year);
     $notHere *= 8;
-    if($year == $thisYear){
+    if ($year === $thisYear) {
         $total += printHours('01.01.'.$year, 'yesterday', $notHere);
-    }else{
+    } else {
         $total += printHours('01.01.'.$year, '30.12.'.$year, $notHere);
     }
 }
-
 
 printf("%01.2f \n\n", $total);
