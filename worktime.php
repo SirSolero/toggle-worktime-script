@@ -1,9 +1,9 @@
 <?php
 
-if (!file_exists('settings.php')) {
+if (!file_exists(__DIR__.'/settings.php')) {
     die("\nPlease create and configure settings.php\n\n");
 }
-require_once 'settings.php';
+require_once __DIR__.'/settings.php';
 
 function getHolidays($year)
 {
@@ -128,7 +128,7 @@ function printHours($since, $until, $config, $extraO = 0)
 {
     $sinceDatetime = new DateTime($since);
     $untilDatetime = new DateTime($until);
-    if (array_key_exists('DISPLAY_DATE_FORMAT', $config)) {
+    if (array_key_exists('DISPLAY_DATE_FORMAT', $config) && $config['DISPLAY_DATE_FORMAT'] !== '') {
         $since = $sinceDatetime->format($config['DISPLAY_DATE_FORMAT']);
         $until = $untilDatetime->format($config['DISPLAY_DATE_FORMAT']);
     }
