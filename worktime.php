@@ -98,6 +98,11 @@ function totalHours(DateTime $sinceDate, DateTime $untilDate, $config): float
 
 function hoursToWork(DateTime $since, DateTime $until, array $config): float
 {
+    $sinceStart = new DateTime($config['START_DATE']);
+
+    if ($since < $sinceStart) {
+        $since = $sinceStart;
+    }
     $daysOff = array_key_exists('DAYS_OFF', $config) ? $config['DAYS_OFF'] : [];
     $halfDaysOff = array_key_exists('HALF_DAYS_OFF', $config) ? $config['HALF_DAYS_OFF'] : [];
 
@@ -228,8 +233,8 @@ printHours('last Sunday -1 week', 'last Sunday -1 week +6 days', $config);
 
 $total = 0;
 $thisYear = (int) date('Y');
-
-for ($year = $config['START_YEAR']; $year <= $thisYear; $year++) {
+$startYear = (int) (new DateTimeImmutable($config['START_DATE']))->format('Y');
+for ($year = $startYear; $year <= $thisYear; $year++) {
     if ($year === $thisYear) {
         $total += printHours('01.01.'.$year, 'yesterday', $config);
     } else {
