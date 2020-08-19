@@ -15,7 +15,6 @@ function getHolidays($year)
 
     // $bettag = strtotime('3 sunday', mktime(0, 0, 0, 9, 1, $year)); //betttag
 
-
     return [
         mktime(0, 0, 0, 12, 31, $year), // silvester
         mktime(0, 0, 0, 1, 1, $year), // neujahr
@@ -28,9 +27,10 @@ function getHolidays($year)
         mktime(0, 0, 0, $easterMonth, $easterDay - 2, $easterYear), //karfreitag
         mktime(0, 0, 0, $easterMonth, $easterDay + 1, $easterYear), //ostermontag
         mktime(0, 0, 0, $easterMonth, $easterDay + 39, $easterYear), //auffahrt
-        mktime(0, 0, 0, $easterMonth, $easterDay + 51, $easterYear), //pfingst-montag
+        mktime(0, 0, 0, $easterMonth, $easterDay + 50, $easterYear), //pfingst-montag
         //  strtotime('+1 day', $bettag), //bettmontag
     ];
+
 }
 
 function getHalfHolidays($year)
@@ -89,8 +89,9 @@ function hoursToWork($since, $until, $config)
     $days = 0;
     while ($since <= $until) {
         $vacationDays = getVacationDays($config, (int) $until->format('Y'));
-        if (!in_array($since, $vacationDays, false)) {
-            // no hours to work in vacation
+        $otherLeaveDays = getOtherLeaveDays($config, (int)  $until->format('Y'));
+        if (!in_array($since, $vacationDays, false) && !in_array($since, $otherLeaveDays, false)) {
+            // no hours to work in vacation or other leave
             $w = (int) $since->format('w');
 
             if ($w !== 0 && $w !== 6
@@ -112,7 +113,7 @@ function hoursToWork($since, $until, $config)
                         $days += 0.5;
 
                     } else {
-                        // current they is neither a public holiday nor a weekly day off --> add a full day to work
+                        // current day is neither a public holiday nor a weekly day off --> add a full day to work
                         $days++;
                     }
                 }
@@ -150,10 +151,10 @@ function printHours($since, $until, $config, $extraO = 0)
 
 function printVacationInfo($config, $year)
 {
-    echo
-        '  Vacation taken: '.count(getVacationDays($config, $year, new DateTime('today'))).
-        "d\n  Vacation planed: ".count(getVacationDays($config, $year, null)).
-        "d\n  Vacation unplaned: ".getAmountNotPlanedVacationDays($config, $year)."d\n";
+    printf("  Vacation taken: %01.1fd \n", count(getVacationDays($config, $year, new DateTime('today'))));
+    printf("  Vacation planed: %01.1fd \n", count(getVacationDays($config, $year, null)));
+    printf("  Vacation unplanned: %01.1fd \n", getAmountNotPlanedVacationDays($config, $year));
+    printf("  Other leave taken: %01.1fd \n", count(getOtherLeaveDays($config, $year, new DateTime('today'))));
 }
 
 function getVacationDays($config, $year, $until = null)
@@ -181,6 +182,33 @@ function getVacationDays($config, $year, $until = null)
     }
 
     return $vacationDays;
+}
+
+function getOtherLeaveDays($config, $year, $until = null)
+{
+    if (!array_key_exists('OTHER-LEAVE', $config) || !array_key_exists($year, $config['OTHER-LEAVE'])) {
+        return [];
+    }
+    $otherLeaveDays = [];
+    foreach ($config['OTHER-LEAVE'][$year] as $otherLeave) {
+        if (!array_key_exists('FROM', $otherLeave) || !array_key_exists('UNTIL', $otherLeave)) {
+            die('current "OTHER-LEAVE" not configured correctly with \'FROM\' and \'UNTIL\'');
+        }
+        if ($otherLeave['FROM'] === null || $otherLeave['UNTIL'] === null) {
+            break;
+        }
+        $from = clone $otherLeave['FROM'];
+        while ($from <= $otherLeave['UNTIL']) {
+            if ($until === null || $from <= $until) {
+                if(hoursToWorkAtDay($config, $from) > 0) {
+                    $otherLeaveDays[] = clone $from;
+                }
+            }
+            $from->modify('+1 day');
+        }
+    }
+
+    return $otherLeaveDays;
 }
 
 function hoursToWorkAtDay($config, $day)
@@ -212,7 +240,7 @@ function hoursToWorkAtDay($config, $day)
     }
 
     if (in_array($day->getTimestamp(), getHalfHolidays((int) $day->format('Y')), true)) {
-        // 4 hours to work on a half a public holiday
+        // 4 hours to work on a half public holiday
         return 4;
     }
 
@@ -234,8 +262,6 @@ function getAmountNotYetTakenVacation($config, $year)
 {
     return getAmountNotPlanedVacationDays($config, $year, new DateTime('today'));
 }
-
-echo "\n";
 
 printHours('today', 'today', $config);
 printHours('yesterday', 'yesterday', $config);
