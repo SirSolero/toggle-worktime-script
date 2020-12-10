@@ -1,14 +1,9 @@
+#!/usr/bin/env php
 <?php
 
-if (!file_exists(__DIR__.'/settings.php')) {
-    die("\nPlease create and configure settings.php\n\n");
-}
-require_once __DIR__.'/settings.php';
-
-function getHolidays($year)
+function getHolidays(int $year): array
 {
     $easterDate = easter_date($year);
-
     $easterDay = date('j', $easterDate);
     $easterMonth = date('n', $easterDate);
     $easterYear = date('Y', $easterDate);
@@ -16,7 +11,7 @@ function getHolidays($year)
     // $bettag = strtotime('3 sunday', mktime(0, 0, 0, 9, 1, $year)); //bettag
 
     return [
-        mktime(0, 0, 0, 12, 31, $year), // silvester
+        //  mktime(0, 0, 0, 12, 31, $year), // silvester
         mktime(0, 0, 0, 1, 1, $year), // neujahr
         mktime(0, 0, 0, 1, 2, $year), // berchtold
         mktime(0, 0, 0, 8, 1, $year), // 1. aug
@@ -27,18 +22,19 @@ function getHolidays($year)
         mktime(0, 0, 0, $easterMonth, $easterDay - 2, $easterYear), //karfreitag
         mktime(0, 0, 0, $easterMonth, $easterDay + 1, $easterYear), //ostermontag
         mktime(0, 0, 0, $easterMonth, $easterDay + 39, $easterYear), //auffahrt
-        mktime(0, 0, 0, $easterMonth, $easterDay + 50, $easterYear), //pfingst-montag
-        //  strtotime('+1 day', $bettag), //betmontag
+        mktime(0, 0, 0, $easterMonth, $easterDay + 51, $easterYear), //pfingst-montag
     ];
 
 }
 
-function getHalfHolidays($year)
+function getHalfHolidays(int $year): array
 {
     $knabenschiessen = strtotime('2 sunday', mktime(0, 0, 0, 9, 1, $year));
     $knabenschiessen = strtotime('+1 day', $knabenschiessen);
+    $heiligabend = mktime(0, 0, 0, 12, 24, $year);
+    $silvester = mktime(0, 0, 0, 12, 31, $year);
 
-    return [$knabenschiessen, getSechselauten($year)];
+    return [$silvester, $heiligabend, $knabenschiessen, getSechselauten($year)];
 }
 
 function getSechselauten($year)
@@ -60,62 +56,71 @@ function getSechselauten($year)
     return $sechselauten;
 }
 
-function totalHours($since, $until, $config)
+function getUserInfos(): array
 {
-    if (!array_key_exists('TOGGL_API_TOKEN', $config)) {
-        die("set TOGGL_API_TOKEN\n");
+    $user = getenv('GOTOM_USER');
+    if (!$user) {
+        $user = 'settings';
+    }
+
+    $config = require __DIR__.'/'.$user.'.php';
+    $token = getenv('TOGGL_TOKEN');
+    if ($token) {
+        $config['TOGGL_API_TOKEN'] = $token;
+    }
+
+    if (!isset($config['TOGGL_API_TOKEN'])) {
+        die('Create with a valid toggl token (api key) - https://toggl.com/app/profile');
     }
     if (!array_key_exists('TOGGL_USER_IDS', $config)) {
         die("set TOGGL_USER_IDS\n");
     }
     if (!array_key_exists('TOGGL_USER_AGENT', $config)) {
-        die("set TOGGL_USER_AGENT\n");
+        $config['TOGGL_USER_AGENT'] = 'test_api';
     }
-    $since = $since->format('Y-m-d');
-    $until = $until->format('Y-m-d');
-    $command = ' curl -s  -u '.$config['TOGGL_API_TOKEN'].':api_token GET "https://toggl.com/reports/api/v2/summary?type=me&workspace_id=1006502&since='.$since.'&until='.$until.'&user_ids='.$config['TOGGL_USER_IDS'].'&user_agent='.$config['TOGGL_USER_AGENT'].'" ';
+
+    return $config;
+}
+
+
+function totalHours(DateTime $sinceDate, DateTime $untilDate, $config): float
+{
+    $since = $sinceDate->format('Y-m-d');
+    $until = $untilDate->format('Y-m-d');
+    $url = 'https://toggl.com/reports/api/v2/summary?type=me&workspace_id=1006502&since='.$since.'&until='.$until.'&user_ids='.$config['TOGGL_USER_IDS'].'&user_agent='.$config['TOGGL_USER_AGENT'];
+    $command = ' curl -s  -u '.$config['TOGGL_API_TOKEN'].':api_token GET "'.$url.'" ';
 
     $json = exec($command);
-    $arr = json_decode($json, true);
+    $arr = json_decode($json, true, 512);
 
     return $arr['total_grand'] / 1000 / 60 / 60;
 }
 
-function hoursToWork($since, $until, $config)
+function hoursToWork(DateTime $since, DateTime $until, array $config): float
 {
+    $sinceStart = new DateTime($config['START_DATE']);
+
+    if ($since < $sinceStart) {
+        $since = $sinceStart;
+    }
     $daysOff = array_key_exists('DAYS_OFF', $config) ? $config['DAYS_OFF'] : [];
     $halfDaysOff = array_key_exists('HALF_DAYS_OFF', $config) ? $config['HALF_DAYS_OFF'] : [];
 
     $days = 0;
     while ($since <= $until) {
-        $vacationDays = getVacationDays($config, (int) $until->format('Y'));
-        $otherLeaveDays = getOtherLeaveDays($config, (int)  $until->format('Y'));
-        if (!in_array($since, $vacationDays, false) && !in_array($since, $otherLeaveDays, false)) {
-            // no hours to work in vacation or other leave
-            $w = (int) $since->format('w');
-
-            if ($w !== 0 && $w !== 6
-                && !in_array($w, $daysOff, true)
-                && (int) $since->getTimestamp() >= mktime(0, 0, 0, $config['START_MONTH'], 1, $config['START_YEAR'])) {
-                // current day is not a weekend day and bigger then the start day
-                $hdays = getHolidays($since->format('Y'));
-
-                if (!in_array($since->getTimestamp(), $hdays, true)) {
+        $w = (int) $since->format('w');
+        if ($w !== 0 && $w !== 6 && !in_array($w, $daysOff, true)) {
+            $hdays = getHolidays((int) $since->format('Y'));
+            if (!in_array($since->getTimestamp(), $hdays, true)) {
+                $halfDays = getHalfHolidays((int) $since->format('Y'));
+                $days++;
+                if (in_array($w, $halfDaysOff, true)) {
+                    // current day is a weekly half day off
+                    $days -= 0.5;
+                }
+                if (in_array($since->getTimestamp(), $halfDays, true)) {
                     // current day is not  a public holiday
-                    $halfDays = getHalfHolidays($since->format('Y'));
-
-                    if (!in_array($w, $halfDaysOff, true) && in_array($since->getTimestamp(), $halfDays, true)) {
-                        // current day is not a weekly half day off but a public half holiday --> add half a day to work
-                        $days += 0.5;
-
-                    } elseif (in_array($w, $halfDaysOff, true)) {
-                        // current day is a weekly half day off (but not a public holiday) --> add half a day to work
-                        $days += 0.5;
-
-                    } else {
-                        // current day is neither a public holiday nor a weekly day off --> add a full day to work
-                        $days++;
-                    }
+                    $days -= 0.5;
                 }
             }
         }
@@ -125,7 +130,7 @@ function hoursToWork($since, $until, $config)
     return $days * 8; // 8 hours to work each day
 }
 
-function printHours($config, $since, $until = null, $extraO = 0)
+function printHours(string $since, string $until, array $config, float $extraO = 0): float
 {
     $sinceDatetime = new DateTime($since);
     $untilDatetime = new DateTime($until ?? $since);
@@ -141,16 +146,18 @@ function printHours($config, $since, $until = null, $extraO = 0)
         echo $since.' - '.$until.":\n";
     }
 
-    $t = totalHours($sinceDatetime, $untilDatetime, $config);
-    $w = hoursToWork($sinceDatetime, $untilDatetime, $config);
-    $o = $t - $w + $extraO;
-    printf("  %01.2f - %01.2f = %01.2f \n", $t, $w, $o);
+    $t = totalHours(clone $sinceDatetime, clone $untilDatetime, $config);
+    $w = hoursToWork(clone $sinceDatetime, clone $untilDatetime, $config);
+    $v = countVacationDays(clone $sinceDatetime, clone $untilDatetime, $config);
+    $o = $t - $w + $v + $extraO;
+    printf("  %01.2f - %01.2f + %01.2f = %01.2f \n", $t, $w, $v, $o);
 
     return $o;
 }
 
-function printVacationInfo($config, $year)
+function countVacationDays(DateTime $since, DateTime $until, array $config): float
 {
+    $year = (int) $since->format('Y');
     printf("  Vacation taken: %01.1fd \n", count(getVacationDays($config, $year, new DateTime('today'))));
     printf("  Vacation planed: %01.1fd \n", count(getVacationDays($config, $year, null)));
     printf("  Vacation saldo: %01.1fd \n", getAmountNotPlanedVacationDays($config, $year));
@@ -160,9 +167,20 @@ function printVacationInfo($config, $year)
 function getVacationDays($config, $year, $until = null)
 {
     if (!array_key_exists('VACATION', $config) || !array_key_exists($year, $config['VACATION'])) {
-        return [];
+        return 0;
     }
-    $vacationDays = [];
+    $vacationDays = 0;
+    $vacations = $config['VACATION'][$year];
+    //fallback
+    if ($vacations[0] === 'sum') {
+        array_shift($vacations);
+
+        return array_sum($vacations) * 8;
+    }
+    $daysOff = array_key_exists('DAYS_OFF', $config) ? $config['DAYS_OFF'] : [];
+    $halfDaysOff = array_key_exists('HALF_DAYS_OFF', $config) ? $config['HALF_DAYS_OFF'] : [];
+    $hdays = getHolidays($year);
+    $halfDays = getHalfHolidays($year);
     foreach ($config['VACATION'][$year] as $vacation) {
         if (!array_key_exists('FROM', $vacation) || !array_key_exists('UNTIL', $vacation)) {
             die("vacation not configured correctly with 'FROM' and 'UNTIL'\n");
@@ -171,11 +189,12 @@ function getVacationDays($config, $year, $until = null)
             break;
         }
         $from = clone $vacation['FROM'];
+        if ($from < $since) {
+            continue;
+        }
         while ($from <= $vacation['UNTIL']) {
-            if ($until === null || $from <= $until) {
-                if(hoursToWorkAtDay($config, $from) > 0) {
-                    $vacationDays[] = clone $from;
-                }
+            if ($from <= $until) {
+                $vacationDays += hoursToWorkAtDay($hdays, $halfDays, $daysOff, $halfDaysOff, $from);
             }
             $from->modify('+1 day');
         }
@@ -184,107 +203,54 @@ function getVacationDays($config, $year, $until = null)
     return $vacationDays;
 }
 
-function getOtherLeaveDays($config, $year, $until = null)
+function hoursToWorkAtDay(array $holidays, array $halfHolidays, array $daysOff, array $halfDaysOff, DateTime $day)
 {
-    if (!array_key_exists('OTHER-LEAVE', $config) || !array_key_exists($year, $config['OTHER-LEAVE'])) {
-        return [];
-    }
-    $otherLeaveDays = [];
-    foreach ($config['OTHER-LEAVE'][$year] as $otherLeave) {
-        if (!array_key_exists('FROM', $otherLeave) || !array_key_exists('UNTIL', $otherLeave)) {
-            die('current "OTHER-LEAVE" not configured correctly with \'FROM\' and \'UNTIL\'');
-        }
-        if ($otherLeave['FROM'] === null || $otherLeave['UNTIL'] === null) {
-            break;
-        }
-        $from = clone $otherLeave['FROM'];
-        while ($from <= $otherLeave['UNTIL']) {
-            if ($until === null || $from <= $until) {
-                if(hoursToWorkAtDay($config, $from) > 0) {
-                    $otherLeaveDays[] = clone $from;
-                }
-            }
-            $from->modify('+1 day');
-        }
-    }
-
-    return $otherLeaveDays;
-}
-
-function hoursToWorkAtDay($config, $day)
-{
+    $daysOff[] = 0;
+    $daysOff[] = 6;
     $w = (int) $day->format('w');
-    if ($w === 0 || $w === 6) {
-        // no hours on weekend
+    if (in_array($w, $daysOff, false)) {
         return 0;
     }
 
-    if (array_key_exists('DAYS_OFF', $config) && in_array($w, $config['DAYS_OFF'], false)) {
-        // no hours on days off
-        return 0;
-    }
-
-    if (in_array($day->getTimestamp(), getHolidays((int) $day->format('Y')), true)) {
+    if (in_array($day->getTimestamp(), $holidays, true)) {
         // no hours on public holidays
         return 0;
     }
 
-    if (array_key_exists('HALF_DAYS_OFF', $config) && in_array($w, $config['HALF_DAYS_OFF'], false)) {
-        if (in_array($day->getTimestamp(), getHalfHolidays((int) $day->format('Y')), true)) {
-            // no hours to work on a half day off on a half public holiday
-            return 0;
-        }
-
-        // 4 hours to work on a half day off
-        return 4;
-    }
-
-    if (in_array($day->getTimestamp(), getHalfHolidays((int) $day->format('Y')), true)) {
-        // 4 hours to work on a half public holiday
-        return 4;
-    }
-
     // 8 hours to work on a "normal" day
-    return 8;
-
-}
-
-function getAmountNotPlanedVacationDays($config, $year, $until = null)
-{
-    if (!array_key_exists('VACATION_DAYS_AMOUNT', $config)) {
-        die('Please configure VACATION_DAYS_AMOUNT in settings.php');
+    $hours = 8;
+    if (in_array($day->getTimestamp(), $halfHolidays, true)) {
+        // 4 hours to work on a half a public holiday
+        $hours -= 4;
+    }
+    if (in_array($day->getTimestamp(), $halfDaysOff, true)) {
+        // no hours to work on a half day off on a half public holiday
+        $hours -= 4;
     }
 
-    return $config['VACATION_DAYS_AMOUNT'] - count(getVacationDays($config, $year, $until));
+    return $hours;
+
 }
 
-function getAmountNotYetTakenVacation($config, $year)
-{
-    return getAmountNotPlanedVacationDays($config, $year, new DateTime('today'));
-}
-
-$displayDate = 'today';
-if (2 === $argc && strtotime($argv[1])) {
-    $displayDate = $argv[1];
-}
-
-printHours($config, $displayDate);
-printHours($config, $displayDate.' -1day');
-printHours($config, 'last Sunday', 'last Sunday +6 days');
-printHours($config, 'last Sunday -1 week', 'last Sunday -1 week +6 days');
+echo "\n";
+$config = getUserInfos();
+printHours('today', 'today', $config);
+printHours('yesterday', 'yesterday', $config);
+printHours('last Sunday', 'last Sunday +6 days', $config);
+printHours('last Sunday -1 week', 'last Sunday -1 week +6 days', $config);
 
 $total = 0;
 $thisYear = (int) date('Y');
-
-for ($year = $config['START_YEAR']; $year <= $thisYear; $year++) {
+$startYear = (int) (new DateTimeImmutable($config['START_DATE']))->format('Y');
+for ($year = $startYear; $year <= $thisYear; $year++) {
     if ($year === $thisYear) {
         $total += printHours($config, '01.01.'.$year, $displayDate.' -1day');
     } else {
         $total += printHours($config, '01.01.'.$year, '31.12.'.$year);
     }
-    printVacationInfo($config, $year);
 }
 
 echo "\nTotal hours: ";
 printf("%01.2f \n\n", $total);
 
+printf("Overall: %01.2fh / %01.2fd \n\n", $total, $total / 8);
