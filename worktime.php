@@ -13,7 +13,7 @@ function getHolidays($year)
     $easterMonth = date('n', $easterDate);
     $easterYear = date('Y', $easterDate);
 
-    // $bettag = strtotime('3 sunday', mktime(0, 0, 0, 9, 1, $year)); //betttag
+    // $bettag = strtotime('3 sunday', mktime(0, 0, 0, 9, 1, $year)); //bettag
 
     return [
         mktime(0, 0, 0, 12, 31, $year), // silvester
@@ -28,7 +28,7 @@ function getHolidays($year)
         mktime(0, 0, 0, $easterMonth, $easterDay + 1, $easterYear), //ostermontag
         mktime(0, 0, 0, $easterMonth, $easterDay + 39, $easterYear), //auffahrt
         mktime(0, 0, 0, $easterMonth, $easterDay + 50, $easterYear), //pfingst-montag
-        //  strtotime('+1 day', $bettag), //bettmontag
+        //  strtotime('+1 day', $bettag), //betmontag
     ];
 
 }
@@ -125,10 +125,10 @@ function hoursToWork($since, $until, $config)
     return $days * 8; // 8 hours to work each day
 }
 
-function printHours($since, $until, $config, $extraO = 0)
+function printHours($config, $since, $until = null, $extraO = 0)
 {
     $sinceDatetime = new DateTime($since);
-    $untilDatetime = new DateTime($until);
+    $untilDatetime = new DateTime($until ?? $since);
     if (array_key_exists('DISPLAY_DATE_FORMAT', $config) && $config['DISPLAY_DATE_FORMAT'] !== '') {
         $since = $sinceDatetime->format($config['DISPLAY_DATE_FORMAT']);
         $until = $untilDatetime->format($config['DISPLAY_DATE_FORMAT']);
@@ -153,7 +153,7 @@ function printVacationInfo($config, $year)
 {
     printf("  Vacation taken: %01.1fd \n", count(getVacationDays($config, $year, new DateTime('today'))));
     printf("  Vacation planed: %01.1fd \n", count(getVacationDays($config, $year, null)));
-    printf("  Vacation unplanned: %01.1fd \n", getAmountNotPlanedVacationDays($config, $year));
+    printf("  Vacation saldo: %01.1fd \n", getAmountNotPlanedVacationDays($config, $year));
     printf("  Other leave taken: %01.1fd \n", count(getOtherLeaveDays($config, $year, new DateTime('today'))));
 }
 
@@ -165,7 +165,7 @@ function getVacationDays($config, $year, $until = null)
     $vacationDays = [];
     foreach ($config['VACATION'][$year] as $vacation) {
         if (!array_key_exists('FROM', $vacation) || !array_key_exists('UNTIL', $vacation)) {
-            die('current vacation not configured correctly with \'FROM\' and \'UNTIL\'');
+            die("vacation not configured correctly with 'FROM' and 'UNTIL'\n");
         }
         if ($vacation['FROM'] === null || $vacation['UNTIL'] === null) {
             break;
@@ -233,10 +233,10 @@ function hoursToWorkAtDay($config, $day)
         if (in_array($day->getTimestamp(), getHalfHolidays((int) $day->format('Y')), true)) {
             // no hours to work on a half day off on a half public holiday
             return 0;
-        } else {
-            // 4 hours to work on a half day off
-            return 4;
         }
+
+        // 4 hours to work on a half day off
+        return 4;
     }
 
     if (in_array($day->getTimestamp(), getHalfHolidays((int) $day->format('Y')), true)) {
@@ -263,19 +263,24 @@ function getAmountNotYetTakenVacation($config, $year)
     return getAmountNotPlanedVacationDays($config, $year, new DateTime('today'));
 }
 
-printHours('today', 'today', $config);
-printHours('yesterday', 'yesterday', $config);
-printHours('last Sunday', 'last Sunday +6 days', $config);
-printHours('last Sunday -1 week', 'last Sunday -1 week +6 days', $config);
+$displayDate = 'today';
+if (2 === $argc && strtotime($argv[1])) {
+    $displayDate = $argv[1];
+}
+
+printHours($config, $displayDate);
+printHours($config, $displayDate.' -1day');
+printHours($config, 'last Sunday', 'last Sunday +6 days');
+printHours($config, 'last Sunday -1 week', 'last Sunday -1 week +6 days');
 
 $total = 0;
 $thisYear = (int) date('Y');
 
 for ($year = $config['START_YEAR']; $year <= $thisYear; $year++) {
     if ($year === $thisYear) {
-        $total += printHours('01.01.'.$year, 'yesterday', $config);
+        $total += printHours($config, '01.01.'.$year, $displayDate.' -1day');
     } else {
-        $total += printHours('01.01.'.$year, '31.12.'.$year, $config);
+        $total += printHours($config, '01.01.'.$year, '31.12.'.$year);
     }
     printVacationInfo($config, $year);
 }
