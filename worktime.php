@@ -292,7 +292,7 @@ $thisYear = (int) date('Y');
 $startYear = (int) (new DateTimeImmutable($config['START_DATE']))->format('Y');
 for ($year = $startYear; $year <= $thisYear; $year++) {
     if ($year === $thisYear) {
-        $total += printHours('01.01.'.$year, 'yesterday', $config);
+        $total += printHours('01.01.'.$year, $displayDate, $config);
     } else {
         $total += printHours('01.01.'.$year, '31.12.'.$year, $config);
     }
